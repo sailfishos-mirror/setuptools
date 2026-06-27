@@ -162,10 +162,14 @@ class TestDiscoverPackagesAndPyModules:
 
     @pytest.mark.parametrize(
         ("config_file", "param", "circumstance"),
-        product(
-            ["setup.cfg", "setup.py", "pyproject.toml"],
-            ["packages", "py_modules"],
-            FILES.keys(),
+        # ``list`` because a one-shot iterator gets exhausted across this
+        # class' test methods; deprecated in pytest 9.1 (pytest-dev/pytest#13409).
+        list(
+            product(
+                ["setup.cfg", "setup.py", "pyproject.toml"],
+                ["packages", "py_modules"],
+                FILES.keys(),
+            )
         ),
     )
     def test_purposefully_empty(self, tmp_path, config_file, param, circumstance):
