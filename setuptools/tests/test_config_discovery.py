@@ -1,12 +1,12 @@
 import os
 import sys
+from collections.abc import Iterable
 from configparser import ConfigParser
 from itertools import product
 from typing import cast
 
 import jaraco.path
 import pytest
-from jaraco.functools import compose
 from path import Path
 
 import setuptools  # noqa: F401 # force distutils.core to be patched
@@ -21,15 +21,17 @@ from .textwrap import DALS
 
 import distutils.core
 
-greedy_product = compose(list, product)
-"""
-``itertools.product`` rendered eager (a list rather than a one-shot iterator).
 
-``@pytest.mark.parametrize`` needs a re-iterable Collection for ``argvalues``:
-a bare iterator gets exhausted after the first of a class' test methods is
-collected, silently skipping the rest. Deprecated in pytest 9.1, raising
-``PytestRemovedIn10Warning`` (pytest-dev/pytest#13409).
-"""
+def greedy_product(*iterables: Iterable[object]) -> list[tuple[object, ...]]:
+    """
+    ``itertools.product`` rendered eager (a list rather than a one-shot iterator).
+
+    ``@pytest.mark.parametrize`` needs a re-iterable Collection for ``argvalues``:
+    a bare iterator gets exhausted after the first of a class' test methods is
+    collected, silently skipping the rest. Deprecated in pytest 9.1, raising
+    ``PytestRemovedIn10Warning`` (pytest-dev/pytest#13409).
+    """
+    return list(product(*iterables))
 
 
 class TestFindParentPackage:
