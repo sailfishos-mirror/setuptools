@@ -67,13 +67,11 @@ def _resolve_dest(extract_dir, name):
 
     dest = os.path.join(extract_dir, *parts)
 
-    # Belt and braces: confirm the result really does resolve within the root.
+    # Belt and braces: confirm the result really does resolve within the root,
+    # catching an escape through a symlink already present in the destination.
     root = os.path.realpath(extract_dir)
-    try:
-        if os.path.commonpath([root, os.path.realpath(dest)]) != root:
-            return None
-    except ValueError:
-        # Paths on different drives are not comparable, and so not contained.
+    resolved = os.path.realpath(dest)
+    if resolved != root and not resolved.startswith(os.path.join(root, '')):
         return None
 
     return dest
