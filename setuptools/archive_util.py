@@ -1,6 +1,7 @@
 """Utilities for extracting common archive formats"""
 
 import contextlib
+import ntpath
 import os
 import posixpath
 import shutil
@@ -29,6 +30,53 @@ class UnrecognizedFormat(DistutilsError):
 def default_filter(src, dst):
     """The default progress/filter callback; returns True for all files"""
     return dst
+
+
+def _resolve_dest(extract_dir, name):
+    r"""
+    Return the path where archive member `name` belongs under `extract_dir`,
+    or None if the member would be written outside of `extract_dir`.
+
+    Both the tar and zip formats specify '/' as the only path separator, so a
+    backslash is never a legitimate separator in a member name and must not be
+    allowed to act as one on Windows (GHSA-grgh-hr87-3jpw). Names that are
+    absolute, drive-qualified, or UNC are rejected for the same reason.
+
+    A directory member keeps its trailing separator, as callers rely on it to
+    distinguish a directory from a file.
+
+    >>> _resolve_dest('dest', 'sub/file.txt') == os.path.join('dest', 'sub', 'file.txt')
+    True
+    >>> _resolve_dest('dest', 'sub/dir/') == os.path.join('dest', 'sub', 'dir', '')
+    True
+    >>> _resolve_dest('dest', '/etc/passwd')
+    >>> _resolve_dest('dest', '../escaped.txt')
+    >>> _resolve_dest('dest', 'sub/../../escaped.txt')
+    >>> _resolve_dest('dest', '..\\escaped.txt')
+    >>> _resolve_dest('dest', 'sub\\..\\..\\escaped.txt')
+    >>> _resolve_dest('dest', 'C:escaped.txt')
+    >>> _resolve_dest('dest', '//server/share/escaped.txt')
+    """
+    if name.startswith('/') or '\\' in name or ntpath.splitdrive(name)[0]:
+        return None
+
+    parts = name.split('/')
+
+    if '..' in parts:
+        return None
+
+    dest = os.path.join(extract_dir, *parts)
+
+    # Belt and braces: confirm the result really does resolve within the root.
+    root = os.path.realpath(extract_dir)
+    try:
+        if os.path.commonpath([root, os.path.realpath(dest)]) != root:
+            return None
+    except ValueError:
+        # Paths on different drives are not comparable, and so not contained.
+        return None
+
+    return dest
 
 
 def unpack_archive(
@@ -114,11 +162,11 @@ def _unpack_zipfile_obj(zipfile_obj, extract_dir, progress_filter=default_filter
     for info in zipfile_obj.infolist():
         name = info.filename
 
-        # don't extract absolute paths or ones with .. in them
-        if name.startswith('/') or '..' in name.split('/'):
+        # don't extract members that escape the extraction directory
+        target = _resolve_dest(extract_dir, name)
+        if target is None:
             continue
 
-        target = os.path.join(extract_dir, *name.split('/'))
         target = progress_filter(name, target)
         if not target:
             continue
@@ -165,11 +213,10 @@ def _iter_open_tar(tar_obj, extract_dir, progress_filter):
     with contextlib.closing(tar_obj):
         for member in tar_obj:
             name = member.name
-            # don't extract absolute paths or ones with .. in them
-            if name.startswith('/') or '..' in name.split('/'):
+            # don't extract members that escape the extraction directory
+            prelim_dst = _resolve_dest(extract_dir, name)
+            if prelim_dst is None:
                 continue
-
-            prelim_dst = os.path.join(extract_dir, *name.split('/'))
 
             try:
                 member = _resolve_tar_file_or_dir(tar_obj, member)
