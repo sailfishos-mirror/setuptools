@@ -51,10 +51,6 @@ TRAVERSAL_NAMES = [
     'C:escaped.txt',
 ]
 
-#: Extracted alongside each traversal attempt to prove that the archive was
-#: processed and that only the offending member was skipped.
-CONTROL_NAME = 'inside.txt'
-
 
 def _make_tarfile(path, names):
     with tarfile.open(path, mode='w:gz') as tgz:
@@ -77,29 +73,47 @@ def _make_zipfile(path, names):
     return str(path)
 
 
-@pytest.mark.parametrize('name', TRAVERSAL_NAMES)
-@pytest.mark.parametrize(
+drivers = pytest.mark.parametrize(
     ('suffix', 'make_archive'),
     [('.tar.gz', _make_tarfile), ('.zip', _make_zipfile)],
     ids=['tar', 'zip'],
 )
-def test_unpack_skips_traversal(tmp_path, name, suffix, make_archive):
+
+
+@drivers
+@pytest.mark.parametrize('name', TRAVERSAL_NAMES)
+def test_unpack_rejects_traversal(tmp_path, name, suffix, make_archive):
     """
-    A member that would land outside the extraction directory is skipped
-    rather than extracted (GHSA-grgh-hr87-3jpw).
+    A member that would land outside the extraction directory aborts the
+    extraction rather than being silently skipped (GHSA-grgh-hr87-3jpw).
     """
-    archive = make_archive(tmp_path / f'malicious{suffix}', [name, CONTROL_NAME])
+    archive = make_archive(tmp_path / f'malicious{suffix}', [name])
+    target = tmp_path / 'dest'
+
+    with pytest.raises(archive_util.UnsafeMember):
+        archive_util.unpack_archive(archive, str(target))
+
+    # nothing was written outside of the target
+    assert {path.name for path in tmp_path.iterdir()} <= {
+        f'malicious{suffix}',
+        'dest',
+    }
+
+
+@drivers
+def test_unpack_extracts_safe_members(tmp_path, suffix, make_archive):
+    """
+    Ordinary members are unaffected by the containment check.
+    """
+    names = ['inside.txt', 'sub/nested.txt', './dot-prefixed.txt']
+    archive = make_archive(tmp_path / f'safe{suffix}', names)
     target = tmp_path / 'dest'
 
     archive_util.unpack_archive(archive, str(target))
 
-    assert (target / CONTROL_NAME).read_text(encoding='utf-8') == CONTROL_NAME
-    # the traversal member was skipped, and nothing landed outside the target
-    assert [path.name for path in target.rglob('*')] == [CONTROL_NAME]
-    assert {path.name for path in tmp_path.iterdir()} == {
-        f'malicious{suffix}',
-        'dest',
-    }
+    assert (target / 'inside.txt').read_text(encoding='utf-8') == 'inside.txt'
+    assert (target / 'sub' / 'nested.txt').exists()
+    assert (target / 'dot-prefixed.txt').exists()
 
 
 def test_unpack_zipfile_creates_directory_members(tmp_path):
@@ -127,5 +141,7 @@ def test_resolve_dest_rejects_symlinked_escape(tmp_path):
     outside.mkdir()
     (target / 'sub').symlink_to(outside, target_is_directory=True)
 
-    assert archive_util._resolve_dest(str(target), 'sub/file.txt') is None
-    assert archive_util._resolve_dest(str(target), 'ok/file.txt') is not None
+    with pytest.raises(archive_util.UnsafeMember):
+        archive_util._resolve_dest(str(target), 'sub/file.txt')
+
+    assert archive_util._resolve_dest(str(target), 'ok/file.txt')
